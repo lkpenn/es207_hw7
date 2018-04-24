@@ -1,0 +1,521 @@
+---
+title: "Homework 7 (Multivariate Analyses)"
+author: "Cininta Pertiwi"
+output:
+  github_document:
+    toc: no
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_depth: 5
+    toc_float: yes
+  pdf_document:
+    toc: yes
+    toc_depth: '5'
+  html_notebook:
+    toc: yes
+    toc_depth: 5
+    toc_float: yes
+---
+
+***
+### <span style="color:blue">Notes on approach</span>
+***
+**--Data wrangling--**
+
+* The problem have asked to *"develop a predictive model of the mean monthly Chl-a concentration in the California Bay Delta using other mean monthly water quality variables"*. I interprested the 'mean monthly' values to be the mean value for a single month meaning that for each month of each year, there is one value which is the mean of all the values in that month. In this dataset, for example, for each variable there is one value for January 2005, one value for February 2005, and so on. This mean monthly value, therefore, was calculated by taking the mean values of all stations since the measurement for each station is collected monthly.
+* Since the predictive model is to predict Chl-a concentration using other mean monthly water quality variables, all other variables (columns) that are not water quality variables were removed. This leaves a dataset that only contains the response variable (mean monthly Chl-a) and the explanatory/predictor variables (mean monthly water quality variables). This dataset is then used to prepare datasets for problems 1 and 2.
+
+**--For problem 1--**
+
+* A stepwise regression was used as the first step in selecting a model. Even though stepwise regression is somewhat a 'black box' approach, it is used because I did not want to use expert judgment (since I do not have sufficient expertise in water quality assessment) so stepwise regression was used to reduce the number of variables.
+* To explore parsimony, however, I did additional multiple correlations (pairwise simple correlation) to further reduce the number of variables in the model.
+* To compare the models, I mostly used the combination of the following values: adjusted R-squared, test statistic, AIC, BIC, and p-value.
+
+**--For problem 2--**
+
+* The grouping of values into dry and wet season was done according [to this article](https://www.water.ca.gov/LegacyFiles/floodmgmt/hafoo/csc/docs/CA_Precipitation_2pager.pdf) from the CA Department of Water Resources. The **wet season** is categorized as months where 90% of annual precipitation occurs which is from October to April. Meanwhile the **dry season** is categorized as the remaining months which is from May to September.
+
+***
+### <span style="color:blue">Data Wrangling</span>
+***
+
+```{r message=FALSE, warning=FALSE}
+# load packages
+
+library(tidyverse)
+library(corrplot)
+library(lubridate)
+library(broom)
+library(reshape2)
+```
+
+```{r message=FALSE, warning=FALSE}
+# load and check dataset
+
+wq <- read_csv("BayDeltaWQ.csv",
+               col_names = TRUE,
+               na = c("NA", "n/p", "n/a"),
+               guess_max = 30000)
+wq
+```
+
+
+```{r}
+# pull out month and year from SampleDate--
+# to allow for grouping by year and month
+
+wq_bymonth <- wq %>%
+  mutate(Year = lubridate::year(SampleDate)) %>%    # add Year column
+  mutate(Month = lubridate::month(SampleDate)) %>%  # add Month column
+  group_by(Year, Month) %>%                         # # group rows by year and month
+  select(Month, everything()) %>%                   # move Month column as 1st column
+  select(Year, everything())                        # move Year column as 1st column
+wq_bymonth
+```
+
+```{r}
+# filter rows to select only those sampled from--
+# October 2004 to September 2012 (water years 2005-2012)
+
+wq_bymonth <- wq_bymonth %>%
+  #group_by(Year, Month) %>%               # group rows by year and month
+  filter(Year > 2003) %>%                 # select observations after 2003
+  filter(!(Year==2004 && Month<10)) %>%   # take out January-September 2004
+  filter(!(Year==2012 && Month>9))        # take out October-December 2012
+wq_bymonth
+```
+
+```{r}
+# summarize the column values to the mean monthly--
+# so that each month in each year has a single value--
+# which is the mean of all values in that month.
+# this will result in 96 rows where each row is the--
+# mean value for that month in that particular year--
+# (12 months x 8 years = 96 months)
+
+wq_meanmonthly <- wq_bymonth %>%
+  summarise_if(is.numeric, mean, na.rm = TRUE) %>%
+       # take the mean values of each month of--
+       # each year only if the column type is a numeric
+  select(-X1) %>%
+       # take out index column (not useful)
+  select(`Chlorophyll a`, everything())
+       # move Chl-a column as first column
+wq_meanmonthly
+```
+
+This `wq_meanmonthly` dataset is what will be used in preparing datasets for problems 1 and 2.
+
+***
+### <span style="color:blue">1| Predictive Model</span>
+***
+
+#### **--Data preparation**
+```{r}
+# remove NaN values
+
+wq_meanmonthly_mod <- wq_meanmonthly %>%
+  select_if(~sum(!is.na(.)) > 0) %>%
+       # remove columns with values that are all NaN
+  select_if(~sum(!is.na(.)) == nrow(wq_meanmonthly))
+       # remove columns which have NaN values
+wq_meanmonthly_mod
+```
+
+```{r}
+# remove variables that are not water quality variables
+
+wq_meanmonthly_mod <- wq_meanmonthly_mod %>%
+  ungroup() %>%
+  select(-Year, -Month, -Depth)
+wq_meanmonthly_mod
+```
+
+Now I will use the `wq_meanmonthly_mod` dataset for the model selection.
+
+#### **--Model selection**
+```{r}
+# use stepwise to reduce the number of variables
+
+wq_step <- step(lm(`Chlorophyll a` ~ ., data = wq_meanmonthly_mod), trace = 0)
+     # stepwise regression; trace = 0 returns only the final model of the stepwise
+wq_step
+```
+
+```{r}
+# the stepwise regression resulted in a model with--
+# 8 predictor variables instead of the initial 19 variables
+
+# make a new dataset containing only the 8 selected variables
+
+wq_model <- select(wq_meanmonthly_mod,
+                   `Chlorophyll a`,
+                   `Conductance (EC)`,
+                   Oxygen,
+                   Temperature,
+                   `Ammonia (Dissolved)`,
+                   `Kjeldahl Nitrogen (Total)`,
+                   `Organic Nitrogen (Dissolved)`,
+                   `Pheophytin a`,
+                   `Solids (Total Dissolved)`)
+wq_model
+```
+
+```{r}
+# let's check if the model with 8 predictor variables is actually--
+# better than with 19 predictor variables
+
+lm_19v <- lm(`Chlorophyll a` ~ ., data = wq_meanmonthly_mod)
+lm_8v <- lm(`Chlorophyll a` ~ ., data = wq_model)
+
+lms <- list(w19v = lm_19v, w8v = lm_8v)
+lms.stats <- mapply(glance, lms)
+colnames(lms.stats) <- names(lms)
+lms.stats
+```
+Although maybe not by much, the model from the stepwise regression (with 8 predictor variables) has a higher adj-r-square and test statistic with lower p-value, AIC, and BIC. From these values, the model with 8 predictor variables do seem to be better.
+
+#### **--Parsimony?**
+Having 8 predictor variables still sounds like a lot of variables. Let's see if variable reduction can still be done by checking potential correlations between the predictor variables.
+```{r}
+# --- (1) let's visualize the relationships between Chl-a and the 8 variables
+
+plot(wq_model, pch=16, col="blue", cex = 0.5, main="Model: Chl-a ~ 8 variables")
+```
+
+From the plot, it looks like the following variables are potentially highly correlated:
+
+* Oxyen and Temperature
+* EC and Solids
+* Ammonia and Kjeldahl Nitrogen
+* Kjeldahl Nitrogen and Organic Nitrogen
+
+```{r}
+# --- (2) let's check with correlation plot
+
+mycor <- cor(wq_model)
+
+cex.before <- par("cex")
+par(cex = 0.7)
+
+corrplot(mycor, method = "number", tl.cex = 1/par("cex"),
+         cl.cex = 1/par("cex"))
+
+par(cex = cex.before)
+```
+
+The correlation plot verifies that the following variables are highly correlated:
+
+* Oxyen x Temperature
+* EC x Solids
+* Ammonia x Kjeldahl Nitrogen
+* Kjeldahl Nitrogen x Organic Nitrogen
+* Temperature x Ammonia
+
+Should some variables be removed? But which ones?
+```{r}
+# --- (3) check regression summary to determine which variable to remove
+
+chla_all <- lm(`Chlorophyll a` ~ ., data = wq_model)
+summary(chla_all)
+```
+
+
+#### **--Model comparison**
+
+Basing on the p-values and the variable correlations above:
+
+* The variables Oxygen, Organic Nitrogen, and Solids are removed while EC, Ammonia and Kjeldahl Nitrogen can also probably be removed.
+* Variables Temperature and Pheophytin a are both left in the models with 3 and 4 variables due to their low p-value and high correlation with Chl-a but they are not highly correlated with each other.
+* Since Temperature and Ammonia as well as Ammonia with Kjeldahl Nitrogen have relatively high correlations (-0.62 and 0.67 respectively), they are not included together in 3 and 4-variable models.
+
+Let's see if additional reduction improves the model by comparing the 8-variable model and some other models derived from combinations of the variables.
+
+```{r}
+# --- null
+chla_null <- lm(`Chlorophyll a` ~ 1, data = wq_model)
+
+# --- all 8 variables
+chla_all <- lm(`Chlorophyll a` ~ ., data = wq_model)
+```
+
+```{r}
+# --- 4 variables: EC, Temp, Kj N, Pheo a
+
+chla_ec.tmp.kjn.phe <- lm(`Chlorophyll a` ~
+                              `Conductance (EC)` +
+                              Temperature +
+                              `Kjeldahl Nitrogen (Total)` +
+                              `Pheophytin a`,
+                            data = wq_model)
+```
+
+```{r}
+# --- 3 variables: EC, Temp, Pheo a
+#                  EC, Ammonia, Pheo a
+#                  Temp, Kj N, Pheo a
+
+chla_ec.tmp.phe <- lm(`Chlorophyll a` ~
+                         `Conductance (EC)` +
+                         Temperature +
+                         `Pheophytin a`,
+                       data = wq_model)
+chla_ec.amm.phe <- lm(`Chlorophyll a` ~
+                         `Conductance (EC)` +
+                         `Ammonia (Dissolved)` +
+                         `Pheophytin a`,
+                       data = wq_model)
+chla_tmp.kjn.phe <- lm(`Chlorophyll a` ~
+                         Temperature +
+                         `Kjeldahl Nitrogen (Total)` +
+                         `Pheophytin a`,
+                       data = wq_model)
+
+```
+
+```{r}
+# --- 2 variables: Temp and Pheo a
+#                  Ammonia and Pheo a
+#                  Kj N and Pheo a
+#                  Temp and Kj N
+
+chla_tmp.phe <- lm(`Chlorophyll a` ~
+                      Temperature +
+                      `Pheophytin a`,
+                    data = wq_model)
+chla_amm.phe <- lm(`Chlorophyll a` ~
+                      `Ammonia (Dissolved)` +
+                      `Pheophytin a`,
+                    data = wq_model)
+chla_kjn.phe <- lm(`Chlorophyll a` ~
+                      `Kjeldahl Nitrogen (Total)` +
+                      `Pheophytin a`,
+                    data = wq_model)
+chla_tmp.kjn <- lm(`Chlorophyll a` ~
+                      Temperature +
+                      `Kjeldahl Nitrogen (Total)`,
+                    data = wq_model)
+```
+
+```{r}
+
+lms_compare <- list(null=chla_null,
+                    all=chla_all,
+                    ec.tmp.kjn.phe=chla_ec.tmp.kjn.phe,
+                    ec.tmp.phe=chla_ec.tmp.phe,
+                    ec.amm.phe=chla_ec.amm.phe,
+                    tmp.kjn.phe=chla_tmp.kjn.phe,
+                    tmp.phe=chla_tmp.phe,
+                    amm.phe=chla_amm.phe,
+                    kjn.phe=chla_kjn.phe,
+                    tmp.kjn=chla_tmp.kjn)
+
+lms_compare.stats <- mapply(glance, lms_compare)
+colnames(lms_compare.stats) <- names(lms_compare)
+lms_compare.stats
+```
+
+#### **--Selected multiple regression model**
+By comparing the models above, ***the model with all 8 variables actually had the highest adj-r-squared value compared to the models with less predictor variables***. However, in the case that fewer variables are available for measurement, I would select the following based on comparison of values of the adj-r-square, AIC/BIC, p-value, and test statistic.
+
+* **the 3-variable model `Chl-a ~ Ammonia + Pheophytin a`**
+
+This model is able to explain 46% of the variation in Chl-a compared to 55% when using all 8 variables.
+
+Let's compare the residuals and predicted values for the model with 8 predictor variables and the model `Chl-a ~ Ammonia + Pheophtin a`.
+
+```{r}
+
+# plot residuals
+
+par(mfrow = c(2, 2))
+plot(chla_all, pch = 16, which = 1)
+plot(chla_all, pch = 16, which = 2)
+plot(chla_amm.phe, pch = 16, which = 1)
+plot(chla_amm.phe, pch = 16, which = 2)
+par(mfrow = c(1, 1))
+```
+
+Top: all 8 variables; Bottom: Chl-a ~ Ammonia + Pheophytin a.
+
+```{r}
+
+# plot predicted vs actual
+
+par(mfrow = c(1, 2))
+plot(predict(chla_all),wq_model$`Chlorophyll a`,
+     xlab="predicted",ylab="actual", main ="Chl-a ~ .")
+abline(a=0,b=1)
+plot(predict(chla_amm.phe),wq_model$`Chlorophyll a`,
+     xlab="predicted",ylab="actual", main ="Chl-a ~ Ammonia + Pheophytin a")
+abline(a=0,b=1)
+par(mfrow = c(1, 1))
+```
+
+#### **--Best predictor**
+The selected multiple regression model has 2 variables. Is ther one best predictor for Chl-a concentration? I look at 3 variables: Temperature, Ammonia, and Pheophytin a. These 3 variables have the highest correlation value to Chl-a based on the correlation plot.
+```{r}
+# lm for each of the 3 variables
+chla_tmp <- lm(`Chlorophyll a` ~ Temperature, data = wq_model)
+chla_amm <- lm(`Chlorophyll a` ~ `Ammonia (Dissolved)`, data = wq_model)
+chla_phe <- lm(`Chlorophyll a` ~ `Pheophytin a`, data = wq_model)
+```
+
+```{r}
+# compare lms of the 3 variables
+lms_best <- list(null=chla_null,
+                    all=chla_all,
+                    tmp=chla_tmp,
+                    amm=chla_amm,
+                    phe=chla_phe)
+
+lms_best.stats <- mapply(glance, lms_best)
+colnames(lms_best.stats) <- names(lms_best)
+lms_best.stats
+```
+
+From the comparison, I would say that **the most important variable explaining Chl-a is Pheophytin a** which is able to explain 35% of the variability in Chl-a compared to 25% with Temperature and only 16% with Ammonia.
+
+```{r message=FALSE, warning=FALSE}
+# plot residuals
+
+par(mfrow=c(1,2))
+plot(chla_phe, pch=16, which=1)
+plot(chla_phe, pch=16, which=2)
+par(mfrow=c(1,1))
+```
+
+The are somewhat normal and distributed along the 0 line although improvements may need to be done, such as investigation potential outliers (57, 45, and 3).
+
+```{r message=FALSE, warning=FALSE}
+# plot predicted vs actual
+
+plot(predict(chla_phe),wq_model$`Chlorophyll a`,
+     xlab="predicted",ylab="actual", main = "Chl-a ~ Pheophytin a")
+abline(a=0,b=1)
+```
+
+```{r message=FALSE, warning=FALSE}
+# plot Chl-a vs Pheophytin a actual values with prediction line from model
+
+ggplot(wq_model, aes(x = `Pheophytin a`, y = `Chlorophyll a`)) +
+  geom_point() +
+  geom_line(aes(y = predict(chla_phe)), shape = 1)
+```
+
+The predicted values from the model are somewhat predicting the trend of the actual values. 
+
+***
+### <span style="color:blue">2| Parallel Regression</span>
+***
+
+#### **--Data preparation**
+```{r}
+# add seasons
+
+wq_meanmonthly_season <- wq_meanmonthly
+
+wq_meanmonthly_season$Season <- ifelse(wq_meanmonthly_season$Month > 9 |
+                                   wq_meanmonthly_season$Month < 5, "wet season", "dry season")
+
+wq_season <- wq_meanmonthly_season %>%
+  ungroup() %>%
+  select(Season, everything()) %>%
+  select(Month, everything()) %>%
+  select(Year, everything())
+
+wq_season$Season <- as.factor(wq_season$Season)
+```
+
+```{r}
+# create new dataset for parallel regression model
+
+wq_prl_model <- select(wq_season,
+                       `Chlorophyll a`,
+                       Season,
+                       `Pheophytin a`)
+```
+
+#### **--Model comparison**
+
+```{r}
+# perform lms
+
+# Chl-a ~ season
+chla_season <- lm(`Chlorophyll a` ~ Season, data = wq_prl_model)
+
+# Chl-a ~ Pheophytin a
+chla_phea <- lm(`Chlorophyll a` ~ `Pheophytin a`, data = wq_prl_model)
+
+# Chl-a ~ season + pheophytin a
+chla_season.phea <- lm(`Chlorophyll a` ~ Season + `Pheophytin a`, data = wq_prl_model)
+```
+
+```{r}
+# compare models
+lms_prl <- list(season=chla_season, phea=chla_phea, season.phea=chla_season.phea)
+
+lms_prl.stats <- mapply(glance, lms_prl)
+colnames(lms_prl.stats) <- names(lms_prl)
+lms_prl.stats
+```
+The addition of the season category does seem to improve the model. The parallel model is able to explain 43% of the variation while the model with only Pheophytin a as the variable is only able to explain 35% of the variation.
+
+#### **--Residuals**
+
+```{r}
+# plot residuals
+
+par(mfrow=c(2,3))
+
+plot(chla_season, pch=16, which=1)
+plot(chla_phea, pch=16, which=1)
+plot(chla_season.phea, pch=16, which=1)
+
+plot(chla_season, pch=16, which=2)
+plot(chla_phea, pch=16, which=2)
+plot(chla_season.phea, pch=16, which=2)
+
+par(mfrow=c(1,1))
+
+```
+Left: Chl-a ~ season; Middle: Chl-a ~ Pheophytin a; Right: Parallel model.
+
+#### **--Plot**
+
+```{r}
+# extract intercept and slope values to generate regression lines
+
+season_coef <- data.frame(t(coef(chla_season)))
+colnames(season_coef) <- c("intercept", "slope")
+season_coef
+
+phea_coef <- data.frame(t(coef(chla_phea)))
+colnames(phea_coef) <- c("intercept", "slope")
+phea_coef
+
+season.phea_coef <- data.frame(t(coef(chla_season.phea)))
+colnames(season.phea_coef) <- c("intercept", "slope.season", "slope.phe")
+season.phea_coef
+```
+
+```{r}
+# plot Chl-a vs Pheophytin a with regression lines
+
+plot(wq_prl_model$`Pheophytin a`, wq_prl_model$`Chlorophyll a`, 
+     xlab = "Pheophytin a",
+     ylab = "Chlorophyll a",
+     col = wq_prl_model$Season,
+     pch = 16,
+     main = "By Season (dry season: black, dry season: red)")
+abline(reg = chla_phea, lty = 2)
+abline(a = season.phea_coef$intercept, b = season.phea_coef$slope.phe, col = "blue")
+```
+The blue line is the regression line from the parallel model while the dashed black line is the regression line for the `Chl-a ~ Pheophytin a` model. Although not entirely clear from the plot, it seems as though the parallel model is accounting for for the dry season points compared to the univariate model. This may be because of the influence of the season variable in the parallel model. The plot also shows how the dry season may have a higher mean value than the wet season as it's values seem to be higher than values from the wet season.
+
+***
+### <span style="color:blue">3| GitHub Link</span>
+***
+
+https://github.com/cnpw/es207_hw7
