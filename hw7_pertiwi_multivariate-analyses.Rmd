@@ -107,6 +107,8 @@ wq_meanmonthly
 
 This `wq_meanmonthly` dataset is what will be used in preparing datasets for problems 1 and 2.
 
+##LP COMMENT: I feel like you could have piped this all through at once-- it kind of defeats the point of piping to have all these separate objects
+
 ***
 ### <span style="color:blue">1| Predictive Model</span>
 ***
@@ -148,6 +150,7 @@ wq_step
 # 8 predictor variables instead of the initial 19 variables
 
 # make a new dataset containing only the 8 selected variables
+#LP COMMENT: I think this makes your code too rigid-- making a new dataframe with a subset of variables makes the other variables inaccessible, so like, I think this step could have been skipped. 
 
 wq_model <- select(wq_meanmonthly_mod,
                    `Chlorophyll a`,
